@@ -1,0 +1,11 @@
+- Get AlexLib and make sure it's enabled in your campaign
+- Launch your game with these flags
+-console -vconsole
+
+
+- increase volume when gnome is close
+- swap to redeems
+- add !voice command
+- add easter egg commands :-)
+- add flag: delete audio files after they play, otherwise cache them
+-
