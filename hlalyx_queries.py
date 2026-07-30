@@ -122,6 +122,9 @@ class HLAlyxQueries:
 
     def __init__(self, host="127.0.0.1", port=29000, timeout=1.5,
                  verbose: bool = False, debug_timing: bool = False):
+        self._host = host
+        self._port = port
+        self._verbose = verbose
         self._client = _CapturingClient(host, port, verbose=verbose)
         self._timeout = timeout
         self._listener: Optional[threading.Thread] = None
@@ -131,14 +134,94 @@ class HLAlyxQueries:
             "print_ents": deque(maxlen=100),
         }
 
+        # Auto-reconnect state (see start()/connected below). `connected`
+        # is the thing callers/UIs should actually look at -- it reflects
+        # whether the socket is up right now, independent of whether
+        # auto-reconnect is running.
+        self.connected = False
+        self._auto_stop = threading.Event()
+        self._auto_thread: Optional[threading.Thread] = None
+        self._on_status_change = None
+
     def connect(self):
+        """One-shot, blocking connect (raises OSError if HL:A isn't up).
+        Prefer start() below if the game might not be running yet."""
         self._client.connect()
         self._listener = threading.Thread(target=self._client._listen_loop, daemon=True)
         self._listener.start()
         time.sleep(0.2)  # give the initial CHAN channel table a moment to arrive
+        self.connected = True
+
+    def start(self, retry_interval: float = 1.0, on_status_change=None):
+        """
+        Non-blocking alternative to connect(): starts a background thread
+        that keeps trying to connect every `retry_interval` seconds until
+        it succeeds, and keeps watching afterwards so that if the game
+        closes (or the listener thread dies for any other reason) it goes
+        back to retrying automatically instead of leaving the caller with
+        a silently-dead connection.
+
+        `connected` reflects live status at all times; pass
+        `on_status_change(bool)` if you want a callback (e.g. to drive a
+        status dot in a UI) instead of polling `connected` yourself.
+        """
+        self._on_status_change = on_status_change
+        self._auto_thread = threading.Thread(target=self._auto_connect_loop,
+                                              args=(retry_interval,), daemon=True)
+        self._auto_thread.start()
+
+    def _set_connected(self, value: bool):
+        if value == self.connected:
+            return
+        self.connected = value
+        if self._on_status_change:
+            try:
+                self._on_status_change(value)
+            except Exception:
+                pass  # a broken UI callback shouldn't take down the retry loop
+
+    def _auto_connect_loop(self, retry_interval: float):
+        while not self._auto_stop.is_set():
+            if not self.connected:
+                # Fresh client each attempt -- a socket that failed to
+                # connect (or got closed on disconnect) can't be reused.
+                self._client = _CapturingClient(self._host, self._port, verbose=self._verbose)
+                try:
+                    self._client.connect()
+                except OSError:
+                    self._auto_stop.wait(retry_interval)
+                    continue
+                self._listener = threading.Thread(target=self._client._listen_loop, daemon=True)
+                self._listener.start()
+                time.sleep(0.2)  # let the initial CHAN table arrive
+                self._set_connected(True)
+            else:
+                # Detect the game having gone away: the listen loop exits
+                # on socket close/error (see VConsoleClient._listen_loop).
+                if self._listener is not None and not self._listener.is_alive():
+                    self._set_connected(False)
+                    continue
+                self._auto_stop.wait(retry_interval)
 
     def close(self):
+        self._auto_stop.set()
         self._client.close()
+        self._set_connected(False)
+
+    def send_command(self, command: str) -> bool:
+        """
+        Sends a raw console command if currently connected to HL:A.
+        Returns True/False instead of raising, so callers (like
+        chat-triggered commands) can just check the result rather than
+        wrapping every call in a try/except.
+        """
+        if not self.connected:
+            return False
+        try:
+            self._client.send_command(command)
+            return True
+        except (ConnectionError, OSError):
+            return False
 
     # ------------------------------------------------------------------ #
     # Timing / diagnostics
@@ -176,9 +259,20 @@ class HLAlyxQueries:
         their first match appears; wait_for_settle=True commands are done
         once their match count stops growing for `settle_time` seconds.
         """
+        if not self.connected:
+            # HL:A isn't up (yet, or anymore) -- nothing to send to. Return
+            # empty results instead of throwing, so pollers can just treat
+            # this like "no data right now" and try again next tick.
+            return {label: [] for label, _, _, _ in commands}
+
         sent_at = time.time()
-        for _, cmd, _, _ in commands:
-            self._client.send_command(cmd)
+        try:
+            for _, cmd, _, _ in commands:
+                self._client.send_command(cmd)
+        except (ConnectionError, OSError):
+            # Connection dropped between the check above and the send --
+            # the auto-reconnect loop (if running) will notice and retry.
+            return {label: [] for label, _, _, _ in commands}
 
         deadline = sent_at + self._timeout
         state = {
