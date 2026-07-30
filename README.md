@@ -1,6 +1,6 @@
 # Gnome Yapper
 
-This is a Half-Life Alyx Gnome Mod that lets Twitch chat speak TTS audio lines through Gnome Chompsy.
+xHalf-Life Alyx Gnome Mod that lets Twitch chat speak TTS audio lines through Gnome Chompsky.
 
 ## Requirements
 
