@@ -21,6 +21,12 @@ POLL_INTERVAL_SECONDS = 1.0
 
 def poll_loop(queries: HLAlyxQueries, interval: float = POLL_INTERVAL_SECONDS):
     while True:
+        if not queries.connected:
+            # _print_status_change already reported this; just wait for
+            # the background auto-reconnect thread to pick the game up.
+            time.sleep(interval)
+            continue
+
         player_pose = queries.get_player_pose()
         gnome_origins = queries.get_gnome_origins()
 
@@ -37,9 +43,17 @@ def poll_loop(queries: HLAlyxQueries, interval: float = POLL_INTERVAL_SECONDS):
         time.sleep(interval)
 
 
+def _print_status_change(connected: bool):
+    print("[gnome_tracker] Connected to Half-Life: Alyx." if connected
+          else "[gnome_tracker] Half-Life: Alyx not found -- waiting (checking every second)...")
+
+
 if __name__ == "__main__":
     queries = HLAlyxQueries(host="127.0.0.1", port=29000)
-    queries.connect()
+    # start() doesn't require the game to already be running: it retries
+    # the connection every second in the background and keeps retrying
+    # again automatically if the game later closes.
+    queries.start(retry_interval=1.0, on_status_change=_print_status_change)
     try:
         poll_loop(queries)
     except KeyboardInterrupt:
