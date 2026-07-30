@@ -456,13 +456,13 @@ DEFAULT_GRAVITY = "600"  # Source's standard default -- double check against you
 # without your game open, so confirm it once via -tools console and swap it
 # for whatever soundscript (or "play <path/to/file.wav>") actually gives you
 # that sound if this one doesn't fire.
-WEAPON_SWAP_SOUND_CMD = "playgamesound Player.WeaponSelected"
+WEAPON_SWAP_SOUND_CMD = "play common/wpn_select.wav"
 
 CHAT_COMMANDS = {
     "!yaoihands":   ["vr_hand_scale 2"],
     "!normalhands": ["vr_hand_scale 1"],
     "!babyhands":   ["vr_hand_scale 0.5"],
-    "!chudly":      ["sv_cheats 1", 'ent_create prop_physics_interactive model "models/props_junk/gnome.vmdl"'],
+    "!chudly":      ["sv_cheats 1", 'ent_create prop_physics {model models\props\choreo_office\gnome.vmdl}'],
     "!dog":         ["sv_cheats 1", "npc_create npc_headcrab"],
     "!moon":        ["sv_gravity 0"],
     "!earth":       [f"sv_gravity {DEFAULT_GRAVITY}"],
@@ -695,6 +695,18 @@ def _on_hla_status_change(connected: bool):
             ui_state.log("system", f"Half-Life: Alyx closed -- deleted {removed} cached audio file(s)")
 
 
+import tkinter as tk
+
+def _dummy_audio_window():
+    root = tk.Tk()
+    root.title("Gnome Audio")
+    root.geometry("300x100")
+    root.attributes("-topmost", True)
+    tk.Label(root, text="gnome voice hehe ( ͡° ͜ʖ ͡°)", font=("Segoe UI", 16)).pack(expand=True)
+    root.mainloop()
+
+
+
 if __name__ == "__main__":
     # Status page: connection status, output dir, Twitch channel, and a
     # live TTS/command log. (See gnome_ui.py -- deliberately just stdlib
@@ -734,13 +746,16 @@ if __name__ == "__main__":
     # The redeem endpoint is the only thing that ever triggers spoken TTS.
     threading.Thread(target=run_redeem_server, daemon=True).start()
     print(f"Redeem endpoint (always triggers TTS): http://{REDEEM_LISTEN_HOST}:{REDEEM_LISTEN_PORT}{REDEEM_PATH}")
-    print("Chat is always listened to for !gnomevoice and: " + ", ".join(sorted(CHAT_COMMANDS)))
+    print("Chat is always listened to for !gnomevoice")
     print("Normal chat messages also trigger TTS: " +
           ("ENABLED" if ui_state.chat_enabled else "DISABLED") +
           " -- toggle this from the status page.")
+
+    threading.Thread(target=_dummy_audio_window, daemon=True).start()
 
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopped.")
+
